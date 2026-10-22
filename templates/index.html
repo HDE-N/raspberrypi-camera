@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="zh-Hant" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <title>ChArUco Vision Studio | 多鏡頭標定與資料夾管理工作站</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background: radial-gradient(circle at top left, #0f172a, #020617 85%); color: #f8fafc; font-family: system-ui, -apple-system, sans-serif; }
+        .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+        .glass { background: rgba(30, 41, 59, 0.68); backdrop-filter: blur(12px); border: 1px solid rgba(148, 163, 184, 0.15); }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+    <!-- 頂部狀態列 -->
+    <header class="glass px-6 py-3 flex flex-wrap items-center justify-between gap-4 border-b border-slate-800">
+        <div class="flex items-center gap-3">
+            <div class="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center font-bold">C</div>
+            <div>
+                <h1 class="text-sm font-bold text-indigo-300">ChArUco Multi-Camera Studio</h1>
+                <p id="active-folder-banner" class="text-[11px] mono text-slate-400">目前資料夾: 載入中...</p>
+            </div>
+        </div>
+        <div class="flex items-center gap-3 text-xs">
+            <div class="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800">
+                硬體鏡頭: <span id="badge-cam" class="mono font-bold text-amber-400">#0</span>
+            </div>
+            <div class="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800">
+                FPS: <span id="badge-fps" class="mono font-bold text-emerald-400">0.0</span>
+            </div>
+            <div class="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800">
+                角點: <span id="badge-corners" class="mono font-bold text-cyan-400">0 / 24</span>
+            </div>
+            <a href="/api/board_image" target="_blank" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-medium">
+                🖨️ 下載標定板 PNG
+            </a>
+        </div>
+    </header>
+
+    <!-- 主內容三欄佈局 -->
+    <main class="flex-1 p-5 grid grid-cols-1 lg:grid-cols-12 gap-5 max-w-[1800px] w-full mx-auto">
+
+        <!-- 左欄：資料夾管理 + 鏡頭與標定板設定 (3 欄) -->
+        <section class="lg:col-span-3 flex flex-col gap-4 text-xs">
+
+            <!-- 卡片 A：多鏡頭與資料夾管理 -->
+            <div class="glass rounded-2xl p-4 space-y-3 border-l-4 border-l-amber-500">
+                <h2 class="font-bold text-amber-300 text-sm flex justify-between items-center">
+                    <span>📂 1. 鏡頭編號與資料夾管理</span>
+                </h2>
+
+                <div>
+                    <label class="text-slate-400">工作區根目錄 (Workspace Root)</label>
+                    <input id="ws-base-dir" type="text" value="./calib_workspace" class="mono w-full mt-1 rounded bg-slate-900 border border-slate-700 px-2.5 py-1.5 text-slate-200">
+                </div>
+
+                <div class="grid grid-cols-2 gap-2">
+                    <div>
+                        <label class="text-slate-400">硬體鏡頭編號 (CSI/USB)</label>
+                        <select id="ws-cam-num" onchange="syncCamFolderName()" class="mono w-full mt-1 rounded bg-slate-900 border border-slate-700 p-1.5 text-amber-300 font-semibold">
+                            <option value="0">Camera #0</option>
+                            <option value="1">Camera #1</option>
+                            <option value="2">Camera #2</option>
+                            <option value="3">Camera #3</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="text-slate-400">對應子資料夾名稱</label>
+                        <input id="ws-cam-id" type="text" value="cam_0" class="mono w-full mt-1 rounded bg-slate-900 border border-slate-700 px-2.5 py-1.5 text-emerald-300 font-semibold">
+                    </div>
+                </div>
+
+                <!-- 已存在的鏡頭資料夾快速選單 -->
+                <div>
+                    <label class="text-slate-400">快速選擇已存在的鏡頭資料夾：</label>
+                    <div id="existing-folders" class="flex flex-wrap gap-1.5 mt-1.5"></div>
+                </div>
+
+                <button onclick="switchOrLoadFolder()" class="w-full py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold shadow transition">
+                    📂 切換鏡頭並讀取該資料夾內容
+                </button>
+            </div>
+
+            <!-- 卡片 B：相機與 ChArUco 規格設定 -->
+            <div class="glass rounded-2xl p-4 flex-1 flex flex-col justify-between space-y-3">
+                <div class="space-y-2.5">
+                    <h2 class="font-bold text-indigo-300 text-sm border-b border-slate-800 pb-1.5">⚙️ 2. 相機與標定板參數</h2>
+                    <div>
+                        <label class="text-slate-400">擷取解析度</label>
+                        <select id="cfg-res" class="w-full mt-1 rounded bg-slate-900 border border-slate-700 p-1.5">
+                            <option value="640x480">640 × 480 (VGA)</option>
+                            <option value="1280x720">1280 × 720 (HD)</option>
+                            <option value="1920x1080" selected>1920 × 1080 (FHD 推薦)</option>
+                            <option value="2304x1296">2304 × 1296 (PiCam v3)</option>
+                            <option value="2592x1944">2592 × 1944 (5MP)</option>
+                        </select>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="text-slate-400">感光元件寬 (mm)</label>
+                            <input id="cfg-sw" type="number" step="0.01" value="6.45" class="mono w-full mt-1 rounded bg-slate-900 border border-slate-700 p-1.5">
+                        </div>
+                        <div>
+                            <label class="text-slate-400">感光元件高 (mm)</label>
+                            <input id="cfg-sh" type="number" step="0.01" value="3.63" class="mono w-full mt-1 rounded bg-slate-900 border border-slate-700 p-1.5">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="text-slate-400">ChArUco 字典版本</label>
+                        <select id="cfg-dict" class="mono w-full mt-1 rounded bg-slate-900 border border-slate-700 p-1.5">
+                            <option value="DICT_4X4_50">DICT_4X4_50</option>
+                            <option value="DICT_5X5_100" selected>DICT_5X5_100</option>
+                            <option value="DICT_6X6_250">DICT_6X6_250</option>
+                            <option value="DICT_7X7_100">DICT_7X7_100</option>
+                        </select>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="text-slate-400">水平方格數 X</label>
+                            <input id="cfg-sqx" type="number" value="7" class="mono w-full mt-1 rounded bg-slate-900 border border-slate-700 p-1.5">
+                        </div>
+                        <div>
+                            <label class="text-slate-400">垂直方格數 Y</label>
+                            <input id="cfg-sqy" type="number" value="5" class="mono w-full mt-1 rounded bg-slate-900 border border-slate-700 p-1.5">
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="text-slate-400">方格邊長 (mm)</label>
+                            <input id="cfg-sqlen" type="number" step="0.5" value="30.0" class="mono w-full mt-1 rounded bg-slate-900 border border-slate-700 p-1.5">
+                        </div>
+                        <div>
+                            <label class="text-slate-400">標記邊長 (mm)</label>
+                            <input id="cfg-mklen" type="number" step="0.5" value="22.0" class="mono w-full mt-1 rounded bg-slate-900 border border-slate-700 p-1.5">
+                        </div>
+                    </div>
+                    <div class="pt-1 space-y-1">
+                        <label class="flex justify-between"><span class="text-slate-300">旋轉 180°</span><input id="cfg-rot" type="checkbox" checked></label>
+                        <label class="flex justify-between"><span class="text-slate-300">RGB/BGR 對調</span><input id="cfg-rb" type="checkbox" checked></label>
+                        <label class="flex justify-between"><span class="text-slate-300">顯示 3D 座標軸</span><input id="cfg-axes" type="checkbox" checked></label>
+                    </div>
+                </div>
+                <button onclick="applyConfig()" class="w-full py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 font-semibold text-white">
+                    套用規格參數
+                </button>
+            </div>
+        </section>
+
+        <!-- 中欄：即時影像 / 歷史照片檢視器 與 樣本列表 (5 欄) -->
+        <section class="lg:col-span-5 glass rounded-2xl p-4 flex flex-col justify-between">
+            <div>
+                <div class="flex items-center justify-between mb-2 text-xs">
+                    <div class="flex items-center gap-2">
+                        <span id="viewport-title" class="font-bold text-slate-200">🟢 即時鏡頭串流 (Live Stream)</span>
+                    </div>
+                    <button id="btn-back-live" onclick="showLiveStream()" class="hidden px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-medium">
+                        ↩ 返回即時串流畫面
+                    </button>
+                </div>
+
+                <!-- 視訊與照片預覽容器 -->
+                <div class="rounded-xl overflow-hidden bg-black border border-slate-800 aspect-video relative">
+                    <img id="main-viewport" src="/video_feed" class="w-full h-full object-contain">
+                </div>
+
+                <!-- 拍照與標定控制按鈕 -->
+                <div class="grid grid-cols-3 gap-2.5 mt-3 text-xs">
+                    <button onclick="captureSample()" class="py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 font-semibold text-white">
+                        📸 拍照並存檔 (Space)
+                    </button>
+                    <button onclick="runCalibration()" class="py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 font-semibold text-white">
+                        🎯 計算並儲存內外參
+                    </button>
+                    <button onclick="clearSamples()" class="py-2.5 rounded-xl bg-rose-950/80 hover:bg-rose-900 text-rose-200 border border-rose-800/50">
+                        🗑️ 清空此鏡頭資料夾
+                    </button>
+                </div>
+
+                <div id="toast" class="mt-2.5 p-2 rounded bg-slate-900 border border-slate-800 text-xs mono text-indigo-200">
+                    系統就緒。拍下的照片與標定結果會自動存入對應鏡頭資料夾。
+                </div>
+            </div>
+
+            <!-- 資料夾內已儲存的照片樣本清單 -->
+            <div class="mt-4 pt-3 border-t border-slate-800">
+                <div class="flex justify-between text-xs text-slate-400 mb-2">
+                    <span>📁 資料夾內已儲存影像樣本 (<span id="sample-count" class="text-white font-bold">0</span> 張)：</span>
+                    <span>點擊樣本可預覽照片與外參</span>
+                </div>
+                <div id="samples-box" class="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-40 overflow-y-auto text-xs pr-1"></div>
+            </div>
+        </section>
+
+        <!-- 右欄：內外參數據面板 (4 欄) -->
+        <section class="lg:col-span-4 glass rounded-2xl p-4 flex flex-col justify-between text-xs">
+            <div class="space-y-3">
+                <div class="flex justify-between items-center border-b border-slate-800 pb-2">
+                    <h2 class="font-bold text-emerald-300 text-sm">3. 相機內參矩陣 (Intrinsics)</h2>
+                    <span id="calib-status-badge" class="px-2 py-0.5 rounded bg-slate-800 text-slate-400">未標定</span>
+                </div>
+
+                <div class="grid grid-cols-3 gap-2 text-center">
+                    <div class="p-2 rounded bg-slate-900"><div class="text-slate-400">RMS 誤差</div><div id="m-rms" class="mono font-bold text-emerald-400 mt-0.5">—</div></div>
+                    <div class="p-2 rounded bg-slate-900"><div class="text-slate-400">物理焦距</div><div id="m-focal" class="mono font-bold text-indigo-300 mt-0.5">—</div></div>
+                    <div class="p-2 rounded bg-slate-900"><div class="text-slate-400">FOV (X/Y)</div><div id="m-fov" class="mono font-bold text-cyan-300 mt-0.5">—</div></div>
+                </div>
+
+                <div>
+                    <div class="text-slate-400 mb-1">內參矩陣 K (3×3):</div>
+                    <pre id="mat-k" class="mono p-2.5 rounded bg-slate-950 border border-slate-800 text-emerald-300 overflow-x-auto">尚未計算或載入內參...</pre>
+                </div>
+
+                <div>
+                    <div class="text-slate-400 mb-1">畸變係數 D (k1, k2, p1, p2, k3):</div>
+                    <pre id="mat-d" class="mono p-2.5 rounded bg-slate-950 border border-slate-800 text-cyan-300 overflow-x-auto">尚未計算或載入畸變係數...</pre>
+                </div>
+
+                <div class="flex items-center justify-between pt-2 border-t border-slate-800">
+                    <h2 class="font-bold text-amber-300 text-sm">4. 相機外參矩陣 (Extrinsics)</h2>
+                    <select id="ext-mode" onchange="onSelectExtrinsicMode()" class="rounded bg-slate-900 border border-slate-700 p-1 text-slate-200">
+                        <option value="live">即時動態姿態 (Live)</option>
+                    </select>
+                </div>
+
+                <div id="ext-angles" class="mono text-[11px] text-amber-200 bg-slate-900 p-2 rounded">
+                    Roll: —° | Pitch: —° | Yaw: —° | 距離: — mm
+                </div>
+
+                <div>
+                    <div class="text-slate-400 mb-1">旋轉矩陣 R (3×3) 與平移向量 t (mm):</div>
+                    <pre id="mat-rt" class="mono p-2.5 rounded bg-slate-950 border border-slate-800 text-amber-200 overflow-x-auto leading-relaxed">標定後顯示...</pre>
+                </div>
+
+                <div>
+                    <div class="text-slate-400 mb-1">齊次轉換矩陣 T (4×4):</div>
+                    <pre id="mat-t4x4" class="mono p-2.5 rounded bg-slate-950 border border-slate-800 text-slate-300 overflow-x-auto leading-relaxed">—</pre>
+                </div>
+            </div>
+
+            <div class="pt-3 border-t border-slate-800">
+                <div class="text-slate-400 mb-1.5">下載目前鏡頭資料夾之標定檔：</div>
+                <div class="grid grid-cols-3 gap-2 text-center">
+                    <a href="/api/export/json" class="py-2 rounded bg-slate-800 hover:bg-slate-700 text-indigo-300 font-medium">📥 JSON</a>
+                    <a href="/api/export/yaml" class="py-2 rounded bg-slate-800 hover:bg-slate-700 text-cyan-300 font-medium">📥 YAML</a>
+                    <a href="/api/export/npz" class="py-2 rounded bg-slate-800 hover:bg-slate-700 text-emerald-300 font-medium">📥 NPZ</a>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <script>
+        let calibratedSamples = [];
+        let liveExtrinsics = null;
+
+        function toast(msg) { document.getElementById('toast').textContent = msg; }
+
+        // 當選擇硬體鏡頭 #0, #1 時，自動同步建議資料夾名稱 cam_0, cam_1
+        function syncCamFolderName() {
+            const num = document.getElementById('ws-cam-num').value;
+            document.getElementById('ws-cam-id').value = `cam_${num}`;
+        }
+
+        // 切換回即時串流畫面
+        function showLiveStream() {
+            document.getElementById('main-viewport').src = '/video_feed';
+            document.getElementById('viewport-title').textContent = '🟢 即時鏡頭串流 (Live Stream)';
+            document.getElementById('btn-back-live').classList.add('hidden');
+            document.getElementById('ext-mode').value = 'live';
+            renderExtrinsics();
+        }
+
+        // 點擊樣本時，預覽該張儲存的照片與對應外參
+        function inspectSample(idx) {
+            const s = calibratedSamples[idx];
+            if (!s) return;
+            document.getElementById('main-viewport').src = `/api/sample_image/${s.filename}?t=${Date.now()}`;
+            document.getElementById('viewport-title').textContent = `🖼️ 檢視已存照片：${s.filename} (${s.num_corners} 點)`;
+            document.getElementById('btn-back-live').classList.remove('hidden');
+            document.getElementById('ext-mode').value = String(idx);
+            renderExtrinsics();
+        }
+
+        function onSelectExtrinsicMode() {
+            const val = document.getElementById('ext-mode').value;
+            if (val === 'live') {
+                showLiveStream();
+            } else {
+                inspectSample(parseInt(val));
+            }
+        }
+
+        // 載入工作區資料夾清單
+        async function refreshWorkspaceFolders() {
+            const res = await fetch('/api/list_workspace');
+            const data = await res.json();
+            document.getElementById('ws-base-dir').value = data.base_dir;
+            const box = document.getElementById('existing-folders');
+            if (!data.folders || data.folders.length === 0) {
+                box.innerHTML = '<span class="text-slate-500">尚無歷史資料夾</span>';
+                return;
+            }
+            box.innerHTML = data.folders.map(f => `
+                <button onclick="quickSelectFolder('${f.camera_id}')" class="px-2 py-1 rounded border text-[11px] mono transition ${
+                    f.camera_id === data.current_camera_id
+                        ? 'bg-amber-500/20 border-amber-400 text-amber-200 font-bold'
+                        : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-slate-500'
+                }">
+                    📁 ${f.camera_id} (${f.image_count}張${f.is_calibrated ? '✓' : ''})
+                </button>
+            `).join('');
+        }
+
+        function quickSelectFolder(camId) {
+            document.getElementById('ws-cam-id').value = camId;
+            const match = camId.match(/\d+/);
+            if (match) document.getElementById('ws-cam-num').value = match[0];
+            switchOrLoadFolder();
+        }
+
+        // 切換鏡頭或載入指定資料夾的所有內容 (照片 + 內外參)
+        async function switchOrLoadFolder() {
+            const base_dir = document.getElementById('ws-base-dir').value;
+            const camera_id = document.getElementById('ws-cam-id').value;
+            const camera_num = parseInt(document.getElementById('ws-cam-num').value);
+
+            toast(`⏳ 正在開啟並讀取資料夾 [${camera_id}]...`);
+            const res = await fetch('/api/switch_or_load', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ base_dir, camera_id, camera_num })
+            });
+            const data = await res.json();
+            toast(data.msg);
+            if (!data.ok) return;
+
+            showLiveStream();
+
+            // 同步還原該資料夾記錄的標定板規格
+            if (data.board_config) {
+                document.getElementById('cfg-dict').value = data.board_config.dict_name;
+                document.getElementById('cfg-sqx').value = data.board_config.squares_x;
+                document.getElementById('cfg-sqy').value = data.board_config.squares_y;
+                document.getElementById('cfg-sqlen').value = data.board_config.square_length;
+                document.getElementById('cfg-mklen').value = data.board_config.marker_length;
+                document.getElementById('cfg-sw').value = data.board_config.sensor_width_mm;
+                document.getElementById('cfg-sh').value = data.board_config.sensor_height_mm;
+            }
+
+            calibratedSamples = data.samples || [];
+            renderSampleList(calibratedSamples);
+            updateCalibrationUI(data);
+            refreshWorkspaceFolders();
+        }
+
+        // 更新右側內外參面板顯示
+        function updateCalibrationUI(data) {
+            const badge = document.getElementById('calib-status-badge');
+            const sel = document.getElementById('ext-mode');
+            sel.innerHTML = '<option value="live">即時動態姿態 (Live)</option>';
+            (data.samples || []).forEach((s, i) => {
+                sel.innerHTML += `<option value="${i}">${s.filename} (${s.error !== null ? s.error + 'px' : '已載入'})</option>`;
+            });
+
+            if (data.is_calibrated && data.K) {
+                badge.textContent = '✓ 已載入內外參';
+                badge.className = 'px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40';
+                document.getElementById('m-rms').textContent = `${data.rms_error} px`;
+                document.getElementById('m-focal').textContent = `${data.physical.focal_length_mm} mm`;
+                document.getElementById('m-fov').textContent = `${data.physical.fov_x_deg}°/${data.physical.fov_y_deg}°`;
+                document.getElementById('mat-k').textContent = data.K.map(r => '[ ' + r.map(v => v.toFixed(3).padStart(9, ' ')).join(', ') + ' ]').join('\n');
+                document.getElementById('mat-d').textContent = data.D.map(v => v.toFixed(5)).join(', ');
+            } else {
+                badge.textContent = '尚未標定';
+                badge.className = 'px-2 py-0.5 rounded bg-slate-800 text-slate-400';
+                document.getElementById('m-rms').textContent = '—';
+                document.getElementById('m-focal').textContent = '—';
+                document.getElementById('m-fov').textContent = '—';
+                document.getElementById('mat-k').textContent = '此資料夾尚無內參紀錄，請點擊「計算並儲存內外參」...';
+                document.getElementById('mat-d').textContent = '—';
+            }
+            renderExtrinsics();
+        }
+
+        async function applyConfig() {
+            const [w, h] = document.getElementById('cfg-res').value.split('x').map(Number);
+            const res = await fetch('/api/update_config', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    width: w, height: h,
+                    camera_num: parseInt(document.getElementById('ws-cam-num').value),
+                    sensor_width_mm: parseFloat(document.getElementById('cfg-sw').value),
+                    sensor_height_mm: parseFloat(document.getElementById('cfg-sh').value),
+                    dict_name: document.getElementById('cfg-dict').value,
+                    squares_x: parseInt(document.getElementById('cfg-sqx').value),
+                    squares_y: parseInt(document.getElementById('cfg-sqy').value),
+                    square_length: parseFloat(document.getElementById('cfg-sqlen').value),
+                    marker_length: parseFloat(document.getElementById('cfg-mklen').value),
+                    rotate_180: document.getElementById('cfg-rot').checked,
+                    swap_rb: document.getElementById('cfg-rb').checked,
+                    show_axes: document.getElementById('cfg-axes').checked
+                })
+            });
+            const data = await res.json();
+            toast(data.msg);
+        }
+
+        async function captureSample() {
+            const res = await fetch('/api/capture', {method: 'POST'});
+            const data = await res.json();
+            toast(data.msg);
+            if (data.ok) {
+                calibratedSamples = data.samples;
+                renderSampleList(calibratedSamples);
+                refreshWorkspaceFolders();
+            }
+        }
+
+        async function runCalibration() {
+            toast('⏳ 正在計算內外參並寫入鏡頭資料夾...');
+            const res = await fetch('/api/calibrate', {method: 'POST'});
+            const data = await res.json();
+            toast(data.msg);
+            if (!data.ok) return;
+
+            calibratedSamples = data.samples;
+            renderSampleList(calibratedSamples);
+            updateCalibrationUI({ is_calibrated: true, ...data });
+            refreshWorkspaceFolders();
+        }
+
+        async function clearSamples() {
+            if (!confirm('確定要清空目前鏡頭資料夾內的所有照片與標定檔嗎？')) return;
+            const res = await fetch('/api/clear_samples', {method: 'POST'});
+            const data = await res.json();
+            calibratedSamples = [];
+            renderSampleList([]);
+            updateCalibrationUI({ is_calibrated: false });
+            showLiveStream();
+            refreshWorkspaceFolders();
+            toast(data.msg);
+        }
+
+        function renderSampleList(samples) {
+            document.getElementById('sample-count').textContent = samples.length;
+            const box = document.getElementById('samples-box');
+            if (samples.length === 0) {
+                box.innerHTML = '<div class="col-span-full text-slate-500 py-3 text-center">此資料夾尚無儲存的照片</div>';
+                return;
+            }
+            box.innerHTML = samples.map((s, i) => `
+                <div onclick="inspectSample(${i})" class="cursor-pointer p-2 rounded-lg bg-slate-900 border border-slate-800 hover:border-amber-400 flex justify-between items-center transition">
+                    <div>
+                        <div class="font-semibold text-slate-200">🖼️ ${s.filename}</div>
+                        <div class="text-[10px] text-slate-400">${s.num_corners} 個角點</div>
+                    </div>
+                    <span class="mono text-[11px] text-emerald-400">${s.error !== null ? s.error+'px' : ''}</span>
+                </div>
+            `).join('');
+        }
+
+        function renderExtrinsics() {
+            const mode = document.getElementById('ext-mode').value;
+            const ext = (mode === 'live') ? liveExtrinsics : (calibratedSamples[parseInt(mode)] || {}).extrinsics;
+            if (!ext) {
+                document.getElementById('mat-rt').textContent = '無外參資料 (請先完成標定或將標定板置於鏡頭前)...';
+                document.getElementById('mat-t4x4').textContent = '—';
+                return;
+            }
+            document.getElementById('ext-angles').textContent = `Roll: ${ext.euler_deg.roll}° | Pitch: ${ext.euler_deg.pitch}° | Yaw: ${ext.euler_deg.yaw}° | 距離: ${ext.distance_mm} mm`;
+            document.getElementById('mat-rt').textContent = ext.R.map((r, i) => `[ ${r.map(v => v.toFixed(4).padStart(8, ' ')).join(', ')} | ${ext.t[i].toFixed(2).padStart(8, ' ')} ]`).join('\n');
+            document.getElementById('mat-t4x4').textContent = ext.T_4x4.map(r => '[ ' + r.map(v => v.toFixed(3).padStart(8, ' ')).join(', ') + ' ]').join('\n');
+        }
+
+        setInterval(async () => {
+            try {
+                const res = await fetch('/api/status');
+                const d = await res.json();
+                document.getElementById('badge-fps').textContent = d.fps.toFixed(1);
+                document.getElementById('badge-corners').textContent = `${d.corner_count} / ${d.max_corners}`;
+                document.getElementById('badge-cam').textContent = `#${d.camera_num} (${d.camera_id})`;
+                document.getElementById('active-folder-banner').textContent = `目前資料夾: ${d.cam_dir}`;
+                liveExtrinsics = d.live_extrinsics;
+                if (document.getElementById('ext-mode').value === 'live' && d.is_calibrated) renderExtrinsics();
+            } catch (e) {}
+        }, 300);
+
+        window.addEventListener('keydown', e => {
+            if (e.code === 'Space' && e.target.tagName !== 'INPUT') { e.preventDefault(); captureSample(); }
+        });
+
+        // 頁面載入時自動讀取目前預設資料夾內容
+        window.addEventListener('DOMContentLoaded', () => {
+            switchOrLoadFolder();
+        });
+    </script>
+</body>
+</html>
